@@ -5,13 +5,13 @@
 int main(int argc, char *argv[]) {
     
     openlog(NULL,0,LOG_USER);
-    if (argc != 2) {
-        syslog(LOG_ERR,"Invalid Number of Arguments: %d",argc);
+    if (argc != 3) {
+        syslog(LOG_ERR,"Invalid Number of Arguments: %d",argc - 1);
         return 1;
     }
 
-    char *write_file = argv[0];
-    char *write_string = argv[1];
+    char *write_file = argv[1];
+    char *write_string = argv[2];
 
     FILE *file = fopen(write_file, "w");
     if (file == NULL) {
