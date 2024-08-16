@@ -19,7 +19,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    fprintf(file, write_string);
+    syslog(LOG_DEBUG, "Writing %s to %s", write_string, write_file); 
+    fprintf(file, "%s", write_string);
     fclose(file);
 
     syslog(LOG_INFO, "File Written Successfully");

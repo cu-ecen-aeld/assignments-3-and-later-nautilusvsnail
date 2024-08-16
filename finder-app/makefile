@@ -5,7 +5,6 @@ CFLAGS = -Wall -g
 # cross-compile
 CROSS_COMPILE ?= 
 CC := $(CROSS_COMPILE)gcc
-CFLAGS := $(CROSS_COMPILE)gcc $(CFLAGS)
 
 # target executable
 TARGET = writer
