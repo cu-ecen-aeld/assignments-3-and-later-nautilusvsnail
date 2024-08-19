@@ -67,11 +67,12 @@ bool do_exec(int count, ...)
     if (kidpid == -1) {
         return false;
     } else if (kidpid == 0){
-        if (execv(command[0], command) < 0) { return false; }
+        execv(command[0], command);
+        _exit(EXIT_FAILURE);
     } else {
 	int status;
         if (wait(&status) < 0) { return false; }
-        if (!WIFEXITED(status)) { return false; }
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) { return false; }
     }
 
     va_end(args);
@@ -115,12 +116,12 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         if (dup2(fd, STDOUT_FILENO) < 0) { return false; }
         close(fd);
         execv(command[0], command);
-        return false;
+        _exit(EXIT_FAILURE);
     } else {
         close(fd);
 	    int status;
         if (wait(&status) < 0) { return false; }
-        if (!WIFEXITED(status)) { return false; }
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) { return false; }
     }
 
     va_end(args);
