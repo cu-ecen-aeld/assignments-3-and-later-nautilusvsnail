@@ -70,7 +70,8 @@ bool do_exec(int count, ...)
         execv(command[0], command);
         return false;
     } else {
-        if (wait() < 0) { return false; }
+	int status;
+        if (wait(&status) < 0) { return false; }
     }
 
     va_end(args);
@@ -117,7 +118,8 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         return false;
     } else {
         close(fd);
-        if (wait() < 0) { return false; }
+	int status;
+        if (wait(&status)< 0) { return false; }
     }
 
     va_end(args);
