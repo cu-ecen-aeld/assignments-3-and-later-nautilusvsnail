@@ -67,11 +67,11 @@ bool do_exec(int count, ...)
     if (kidpid == -1) {
         return false;
     } else if (kidpid == 0){
-        execv(command[0], command);
-        return false;
+        if (execv(command[0], command) < 0) { return false; }
     } else {
 	int status;
         if (wait(&status) < 0) { return false; }
+        if (~WIFEXITED(status)) { return false; }
     }
 
     va_end(args);
@@ -118,8 +118,9 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         return false;
     } else {
         close(fd);
-	int status;
-        if (wait(&status)< 0) { return false; }
+	    int status;
+        if (wait(&status) < 0) { return false; }
+        if (~WIFEXITED(status)) { return false; }
     }
 
     va_end(args);
