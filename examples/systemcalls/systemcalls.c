@@ -111,11 +111,12 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     if (kidpid == -1) {
         return false;
     } else if (kidpid == 0){
-        if (dup2(fd, 1) < 0) { return false; }
+        if (dup2(fd, STDOUT_FILENO) < 0) { return false; }
         close(fd);
         execv(command[0], command);
         return false;
     } else {
+        close(fd);
         if (wait() < 0) { return false; }
     }
 
