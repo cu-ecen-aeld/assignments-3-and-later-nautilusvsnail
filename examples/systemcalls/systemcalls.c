@@ -16,8 +16,15 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    int ret = system(cmd);
 
-    return true;
+    if (ret == -1) {
+        return false;
+    } else {
+        return true;
+    }
+
+    
 }
 
 /**
@@ -58,6 +65,14 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+
+    int new_pid = fork();
+    if (new_pid = -1) {
+        return false;
+    } else {
+        int ret = execv(command[0], command);
+    }
+    
 
     va_end(args);
 
