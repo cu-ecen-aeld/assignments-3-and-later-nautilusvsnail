@@ -52,9 +52,6 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
 /*
  * TODO:
@@ -66,13 +63,15 @@ bool do_exec(int count, ...)
  *
 */
 
-    int new_pid = fork();
-    if (new_pid = -1) {
+    int kidpid = fork();
+    if (kidpid == -1) {
+        return false;
+    } else if (kidpid == 0){
+        execv(command[0], command);
         return false;
     } else {
-        int ret = execv(command[0], command);
+        if (wait() < 0) { return false; }
     }
-    
 
     va_end(args);
 
@@ -107,6 +106,18 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    int kidpid = fork();
+    if (kidpid == -1) {
+        return false;
+    } else if (kidpid == 0){
+        if (dup2(fd, 1) < 0) { return false; }
+        close(fd);
+        execv(command[0], command);
+        return false;
+    } else {
+        if (wait() < 0) { return false; }
+    }
 
     va_end(args);
 

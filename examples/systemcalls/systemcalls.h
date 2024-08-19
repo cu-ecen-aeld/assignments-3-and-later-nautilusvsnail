@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <fcntl.h>
 
 bool do_system(const char *command);
 
