@@ -71,7 +71,7 @@ bool do_exec(int count, ...)
     } else {
 	int status;
         if (wait(&status) < 0) { return false; }
-        if (~WIFEXITED(status)) { return false; }
+        if (!WIFEXITED(status)) { return false; }
     }
 
     va_end(args);
@@ -120,7 +120,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         close(fd);
 	    int status;
         if (wait(&status) < 0) { return false; }
-        if (~WIFEXITED(status)) { return false; }
+        if (!WIFEXITED(status)) { return false; }
     }
 
     va_end(args);
