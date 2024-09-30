@@ -18,8 +18,6 @@ TOOLCHAIN_LIB="$(realpath $(dirname $(which aarch64-none-linux-gnu-gcc))/..)/aar
 if [ $# -lt 1 ]
 then
 	echo "Using default directory ${OUTDIR} for output"
-elif [ ! -d $1 ]; then
-	echo "Outdir must be a directory. Using default directory ${OUTDIR} for output."
 else
     OUTDIR=$(realpath $1)
 	echo "Using passed directory ${OUTDIR} for output"
