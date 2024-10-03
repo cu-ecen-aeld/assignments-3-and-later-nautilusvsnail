@@ -1,3 +1,9 @@
+// usage: writer <file> <string>
+// creates file at <file> if it does not exist
+//   - <file> must be fully qualified path
+// overwrites any existing data in <file> with <string>
+
+
 #include <stdio.h>
 #include <syslog.h>
 

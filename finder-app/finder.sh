@@ -1,4 +1,8 @@
 #!/bin/sh
+# usage: ./finder.sh <directory-path> <search-string>
+# recursively counts the number of files in directory <directory-path>
+# counts the number of lines containing <search-string>
+#   in the directory path.
 
 # Check if the correct number of arguments are provided
 if [ "$#" -ne 2 ]; then

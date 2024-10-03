@@ -1,4 +1,8 @@
 #!/bin/bash
+# usage: ./writer.sh <file> <string>
+# creates file at <file> if it does not exist
+#   - <file> must be fully qualified path
+# overwrites any existing data in <file> with <string>
 
 
 # Check if the correct number of arguments are provided
