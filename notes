@@ -1,0 +1,17 @@
+# Linux Dependencies:
+sudo apt-get install build-essential libncurses-dev libssl-dev libelf-dev flex bison
+
+# Commands for CPU info:
+1. **`nproc`**: This command shows the number of processing units (cores) available to your system.
+   ```bash
+   nproc
+   ```
+2. **`lscpu`**: This provides detailed information about your CPU architecture, including the number of cores.
+   ```bash
+   lscpu | grep "^CPU(s):"
+   ```
+   The output will show you the number of CPUs/cores available.
+3. **`cat /proc/cpuinfo`**: This command lists detailed information about each CPU core. To count the number of cores, you can use:
+   ```bash
+   grep -c ^processor /proc/cpuinfo
+   ```
