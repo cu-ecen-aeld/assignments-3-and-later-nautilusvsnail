@@ -28,6 +28,12 @@ bool start_thread_obtaining_mutex(pthread_t *thread, pthread_mutex_t *mutex,int 
      *
      * See implementation details in threading.h file comment block
      */
+    
+    
+    thread_data *data = (thread_data *)malloc(sizeof(thread_data));
+    
+    
+    
+    
     return false;
 }
-
