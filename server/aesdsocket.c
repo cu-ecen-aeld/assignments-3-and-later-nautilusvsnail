@@ -152,7 +152,7 @@ int receive_data_to_file(const char *write_file) {
 
     // Receive data and append packets to the file
     do {
-        bytes_received = recv(client_fd, buffer, sizeof(buffer), 0);
+        bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
         if (bytes_received == -1) {
             syslog(LOG_ERR, "receive error: %s", strerror(errno));
             return -1;
@@ -167,6 +167,7 @@ int receive_data_to_file(const char *write_file) {
             fprintf(file, "%s", buffer);
             fflush(file);
         }
+        memset(buffer, 0, BUFFERSIZE);
     } while (newline_ptr == NULL && bytes_received > 0);
 
     fclose(file);
@@ -190,11 +191,12 @@ int send_data_from_file(const char* read_file) {
     size_t bytes_read = 0;
 
     // Read chunks of the file until the end is reached
-    while ((bytes_read = fread(buffer, 1, BUFFERSIZE, file)) > 0) {
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer) - 1, file)) > 0) {
         if (send(client_fd, buffer, bytes_read, 0) != bytes_read) {
             syslog(LOG_ERR, "error sending data");
             return -1;
         }
+        memset(buffer, 0, BUFFERSIZE);
     }
     fclose(file);
     file = NULL;
