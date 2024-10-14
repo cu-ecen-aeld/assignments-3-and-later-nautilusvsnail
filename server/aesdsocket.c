@@ -139,9 +139,10 @@ int main(int argc, char *argv[]) {
     }
     syslog(LOG_INFO, "AESDSOCKET: listening");
 
-    // ACCEPT
-    // todo: make a loop
+
     while (1) {
+
+        // ACCEPT
         client_fd = accept(sock_fd, (struct sockaddr*)&client_addr, &client_len);
         if (ret == -1) {
             syslog(LOG_ERR, "AESDSOCKET: Accept failure: %s", strerror(errno));
@@ -174,6 +175,22 @@ int main(int argc, char *argv[]) {
         // RECV
         // Read data from the socket
         
+        // TODO
+        // change buffer size to 1.  receive a character at a time until newline
+        // actually current buffer solution probably works fine...
+        // I just need to drop out of the recv loop when I hit \n and reply,
+        // THEN pick up receive where I left off.
+        // CHECK BYTES RECEIVED THAT TELLS YOU IF YOU FILLED UP THE BUFFER
+        // the whole "don't assume packet size is less than RAM" thing actually means
+        // you have to do it like this. discrete buffer size and logic to write to the file
+        // as you go and then re-use the buffer.
+        // add closing connection message
+        // delete tmp file on shutdown
+        // add daemon mode
+        // why is it writing the string to the file twice? lol
+        // profit
+
+
         char buffer[BUFFERSIZE];
         ssize_t bytes_received;
         char *newline_ptr;
