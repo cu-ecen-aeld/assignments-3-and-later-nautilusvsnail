@@ -10,3 +10,4 @@ finder-app/output.log
 testfile.txt
 server/aesdsocket
 server/example.c
+server/valgrind-out.txt
