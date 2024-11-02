@@ -27,7 +27,7 @@ void* threadfunc(void* thread_param)
     rc = pthread_mutex_lock(thread_func_args->mutex);
     if (rc != 0) {
         thread_func_args->thread_complete_success = false;
-        ERROR_LOG("Thread %ld mutex log failed with error %s", (long)*(thread_func_args->thread_id), strerror(rc));
+        ERROR_LOG("Thread %ld mutex lock failed with error %s", (long)*(thread_func_args->thread_id), strerror(rc));
     } else {
         DEBUG_LOG("Thread %ld successfully obtained mutex", (long)*(thread_func_args->thread_id));
     }

@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <pthread.h>
 
 #define PORT "9000"
 #define BACKLOG 10
@@ -19,9 +20,18 @@
 
 // GLOBAL
 int sock_fd = -1;
-int client_fd = -1;
-FILE *file = NULL;
 char *write_file = "/var/tmp/aesdsocketdata";
+
+struct thread_data{
+    pthread_t thread_id;
+    int client_fd;
+    FILE *file;
+    struct sockaddr_storage client_addr;
+    socklen_t client_len;
+    pthread_mutex_t mutex;
+    char client_ip_str[INET6_ADDRSTRLEN];
+    char *write_file;
+};
 
 void shutdown_handler(void) {
     // Close the open file and sockets
@@ -137,22 +147,22 @@ int parse_client_ip(const struct sockaddr_storage *client_addr, char* client_ip_
 }
 
 
-int receive_data_to_file(const char *write_file) {
+int receive_data_to_file(struct thread_data *data) {
     char buffer[BUFFERSIZE];
     ssize_t bytes_received = 0;
     char *newline_ptr = NULL; // points to location in buffer
     memset(buffer, 0, BUFFERSIZE);
     
     // open file for writing
-    file = fopen(write_file, "a");
-    if (file == NULL) {
+    data->file = fopen(write_file, "a");
+    if (data->file == NULL) {
         syslog(LOG_ERR, "Failed to open file for writing: %s", write_file);
         return 1;
     }
 
     // Receive data and append packets to the file
     do {
-        bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+        bytes_received = recv(data->client_fd, buffer, sizeof(buffer) - 1, 0);
         if (bytes_received == -1) {
             syslog(LOG_ERR, "receive error: %s", strerror(errno));
             return -1;
@@ -164,25 +174,25 @@ int receive_data_to_file(const char *write_file) {
         }
 
         if (bytes_received > 0) {
-            fprintf(file, "%s", buffer);
-            fflush(file);
+            fprintf(data->file, "%s", buffer);
+            fflush(data->file);
         }
         memset(buffer, 0, BUFFERSIZE);
     } while (newline_ptr == NULL && bytes_received > 0);
 
-    fclose(file);
-    file = NULL;
+    fclose(data->file);
+    data->file = NULL;
 
     return 0;
 }
 
 
-int send_data_from_file(const char* read_file) {
+int send_data_from_file(struct thread_data *data) {
     char buffer[BUFFERSIZE];
     memset(buffer, 0, BUFFERSIZE);
     
-    file = fopen(read_file, "r");  // Open the file for reading
-    if (file == NULL) {
+    data->file = fopen(data->write_file, "r");  // Open the file for reading
+    if (data->file == NULL) {
         syslog(LOG_ERR, "Failed to open file for sending");
         return -1;
     }
@@ -191,22 +201,42 @@ int send_data_from_file(const char* read_file) {
     size_t bytes_read = 0;
 
     // Read chunks of the file until the end is reached
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer) - 1, file)) > 0) {
-        if (send(client_fd, buffer, bytes_read, 0) != bytes_read) {
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer) - 1, data->file)) > 0) {
+        if (send(data->client_fd, buffer, bytes_read, 0) != bytes_read) {
             syslog(LOG_ERR, "error sending data");
             return -1;
         }
         memset(buffer, 0, BUFFERSIZE);
     }
-    fclose(file);
-    file = NULL;
+    fclose(data->file);
+    data->file = NULL;
     return 0;
+}
+
+void thread_read_write(void* thread_param) {
+    struct thread_data *data = (struct thread_data *) thread_param;
+    
+    if (receive_data_to_file(data) != 0) {
+        syslog(LOG_ERR, "receive failure");
+        return -1;
+    };
+
+    if (send_data_from_file(data) != 0) {
+        syslog(LOG_ERR, "send error");
+        return -1;
+    }
+
+    close(data->client_fd);
+    data->client_fd = -1;
+    syslog(LOG_INFO, "Closed connection from %s", data->client_ip_str);
+    free(data);
 }
 
 
 int main(int argc, char *argv[]) {
     int daemon_flag = -1; // false
     int option;
+    pthread_mutex_t mutex;
 
     // Parse command-line options
     while ((option = getopt(argc, argv, "d")) != -1) {
@@ -221,22 +251,8 @@ int main(int argc, char *argv[]) {
                 return -1;
         }
     }
-
-    // if (argc > 2) {
-    //     syslog(LOG_ERR, "too many arguments");
-    //     return -1;
-    // } else if (argc == 2) {
-    //     if (strcmp(argv[1], daemon_arg)) {
-    //         daemon_flag = 0; // true
-    //     } else {
-    //         syslog(LOG_ERR, "invalid argument: %s", argv[1]);
-    //         return -1;
-    //     }
-    // }
     
     int ret;
-    struct sockaddr_storage client_addr;
-    socklen_t client_len = sizeof(client_addr);
 
     openlog(NULL,0,LOG_USER);
 
@@ -288,43 +304,40 @@ int main(int argc, char *argv[]) {
 
 
     while (1) {
-
+        struct thread_data *data = (struct thread_data *)malloc(sizeof(struct thread_data));
+        data->file = NULL;
+        data->mutex = mutex;
+        data->client_len = sizeof(data->client_addr);
+        data->write_file = write_file;
+        
         // ACCEPT
-        client_fd = accept(sock_fd, (struct sockaddr*)&client_addr, &client_len);
+        ret = accept(sock_fd, (struct sockaddr*)&(data->client_addr), &(data->client_len));
         if (ret == -1) {
             syslog(LOG_ERR, "Accept failure: %s", strerror(errno));
+            free(data);
             return -1;
+        } else {
+            data->client_fd = ret;
         }
         
         // Get the client's IP address
-        char client_ip_str[INET6_ADDRSTRLEN];
-        if (parse_client_ip(&client_addr, (char *)&client_ip_str, sizeof(client_ip_str)) == -1) {
+        if (parse_client_ip(&(data->client_addr), (char *)&(data->client_ip_str), sizeof(data->client_ip_str)) == -1) {
             syslog(LOG_ERR, "failed to parse client ip");
+            free(data);
             return -1;
         }
-        syslog(LOG_INFO, "Accepted connection from %s", client_ip_str);
+        syslog(LOG_INFO, "Accepted connection from %s", data->client_ip_str);
 
-        if (receive_data_to_file(write_file) != 0) {
-            syslog(LOG_ERR, "receive failure");
-            return -1;
-        };
-
-        if (send_data_from_file(write_file) !=0) {
-            syslog(LOG_ERR, "send error");
+        thread_read_write((void *)data);
+        ret = pthread_create(data->thread_id, NULL, thread_read_write, (void *)data);
+        if (ret == 0) {
+            DEBUG_LOG("Thread Started: %ld", (long)(data->thread_id));
+            return 0;
+        } else {
+            ERROR_LOG("Thread Start Failed with error %s", strerror(ret));
+            free(data);
             return -1;
         }
-
-        close(client_fd);
-        client_fd = -1;
-        syslog(LOG_INFO, "Closed connection from %s", client_ip_str);
-
-
-
-
-        // TODO
-        // add daemon mode
-        // profit
-
     }
     return 0;
 }
