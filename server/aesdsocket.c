@@ -18,34 +18,6 @@
 #include <stdbool.h>
 #include <time.h>
 
-// TYPES
-struct thread_data
-{
-    pthread_t thread_id;
-    int client_fd;
-    FILE *file;
-    struct sockaddr_storage client_addr;
-    socklen_t client_len;
-    pthread_mutex_t *mutex;
-    char client_ip_str[INET6_ADDRSTRLEN];
-    bool thread_complete;
-};
-
-struct timestamp_thread_data
-{
-    pthread_t thread_id;
-    pthread_mutex_t *mutex;
-    bool thread_complete;
-};
-
-struct threadlist_entry
-{
-    struct thread_data *data;
-    STAILQ_ENTRY(threadlist_entry) next_entry; // list pointer
-};
-
-STAILQ_HEAD(threadlist_head_type, threadlist_entry);
-
 // GLOBAL CONSTANTS
 const char *write_file = "/var/tmp/aesdsocketdata";
 const char *PORT = "9000";
@@ -59,55 +31,85 @@ int sock_fd = -1;
 volatile sig_atomic_t terminate = false;
 struct threadlist_head_type threadlist_head;
 
-// SUPPORT FUNCTIONS
-void thread_cleanup() 
+// TYPES
+struct thread_data
 {
-    struct threadlist_entry *current_entry = STAILQ_FIRST(&threadlist_head);
-    struct threadlist_entry *tmp_next;
+    pthread_t thread_id;
+    int client_fd;
+    FILE *file;
+    struct sockaddr_storage client_addr;
+    socklen_t client_len;
+    pthread_mutex_t *mutex;
+    char client_ip_str[INET6_ADDRSTRLEN];
+    bool thread_complete;
+};
 
-    while(current_entry != NULL) {
-        syslog(LOG_INFO, "in thread cleanup loop");
-        tmp_next = STAILQ_NEXT(current_entry, next_entry);
-        struct thread_data *data = current_entry->data;
-        
-        pthread_join(data->thread_id, NULL); // does not currently check thread exit status
+struct thread_data *create_new_thread_data() {
+    // instantiate new thread_data
+    struct thread_data *data = (struct thread_data*)malloc(sizeof(struct thread_data));
+    data->client_fd = -1;
+    data->file = NULL;
+    memset(&(data->client_addr), 0, sizeof(data->client_addr));
+    data->client_len = sizeof(data->client_addr);
+    data->mutex = &mutex;
+    memset(data->client_ip_str, 0, sizeof(data->client_ip_str));
+    data->thread_complete = false;
 
-        if(data->client_fd >= 0) {
-            close(data->client_fd);
-            data->client_fd = -1;
-            syslog(LOG_INFO, "Closed connection from %s", data->client_ip_str);
-        }
-        
-        if (data->file != NULL) {
-            fclose(data->file);
-            data->file = NULL;
-        }
-
-        STAILQ_REMOVE(&threadlist_head, current_entry, threadlist_entry, next_entry);
-        free(data);
-        free(current_entry);
-        current_entry = tmp_next;
-    }
+    return data;
 }
 
-// void exit_handler(void) 
-// {
-//     // struct threadlist_head_type *threadlist_head = (struct threadlist_head_type *)arg;
-//     if (sock_fd >= 0)
-//     {
-//         syslog(LOG_INFO, "closing sock_fd");
-//         close(sock_fd);
-//     }
-//     remove(write_file);
-//     closelog();
-//     thread_cleanup();
-// }
-
-void handle_signal(int signal)
+struct threadlist_entry
 {
-    syslog(LOG_INFO, "Caught signal %d, shutting down gracefully...", signal);
-    terminate = true;
+    struct thread_data *data;
+    STAILQ_ENTRY(threadlist_entry) next_entry; // list pointer
+};
 
+STAILQ_HEAD(threadlist_head_type, threadlist_entry);
+
+// SUPPORT FUNCTIONS
+void clean_threadlist(bool clean_all)
+{
+    struct threadlist_entry *this_entry = STAILQ_FIRST(&threadlist_head);
+    struct threadlist_entry *tmp_next_entry;
+    int ret;
+
+    while (this_entry != NULL)
+    {
+        tmp_next_entry = STAILQ_NEXT(this_entry, next_entry);
+        if (this_entry->data->thread_complete | clean_all)
+        {
+            struct thread_data* this_data = this_entry->data;
+            
+            ret = pthread_join(this_data->thread_id, NULL); // does not currently check thread exit status
+            if (ret != 0) {
+                syslog(LOG_ERR, "failed to join thread: %s", gai_strerror(ret));
+                return;
+            }
+
+            close(this_data->client_fd);
+            this_data->client_fd = -1;
+            syslog(LOG_INFO, "Closed connection from %s", this_data->client_ip_str);
+            if (this_data->file != NULL) {
+                fclose(this_data->file);
+                this_data->file = NULL;
+            }
+            STAILQ_REMOVE(&threadlist_head, this_entry, threadlist_entry, next_entry);
+            free(this_data);
+            free(this_entry);
+        }
+        this_entry = tmp_next_entry;
+    }
+    return;
+}
+
+
+void thread_cleanup() 
+{
+    clean_threadlist(true);
+}
+
+void handle_exit(void)
+{
     if (sock_fd >= 0)
     {
         syslog(LOG_INFO, "closing sock_fd");
@@ -117,7 +119,14 @@ void handle_signal(int signal)
     thread_cleanup();
     pthread_mutex_destroy(&mutex);
     closelog();
-    exit(0);
+}
+
+void handle_signal(int signal)
+{
+    syslog(LOG_INFO, "Caught signal %d, shutting down gracefully...", signal);
+    pthread_mutex_lock(&mutex);
+    terminate = true;
+    pthread_mutex_unlock(&mutex);
 }
 
 int setup_signal_handler()
@@ -147,6 +156,34 @@ int setup_signal_handler()
     {
         syslog(LOG_ERR, "Error setting SIGTERM handler");
         return -1;
+    }
+    return 0;
+}
+
+int daemon_mode() 
+{
+    // Daemon Mode
+    int kidpid = fork();
+    if (kidpid < 0)
+    {
+        return -1;
+    }
+    else if (kidpid == 0)
+    {
+        if (freopen("/dev/null", "r", stdin) == NULL)
+        {
+            syslog(LOG_ERR, "Failed to redirect stdin to /dev/null");
+        }
+        if (freopen("/dev/null", "w", stdout) == NULL)
+        {
+            syslog(LOG_ERR, "Failed to redirect stdout to /dev/null");
+        }
+        if (freopen("/dev/null", "w", stderr) == NULL)
+        {
+            syslog(LOG_ERR, "Failed to redirect stderr to /dev/null");
+        }
+
+        syslog(LOG_INFO, "daemon initialized successfully");
     }
     return 0;
 }
@@ -362,9 +399,16 @@ void *thread_timestamp(void *thread_param)
     struct timespec last_timestamp = current_time; // reset
     clock_gettime(CLOCK_MONOTONIC, &last_timestamp);
 
-    while (!terminate)
+    while (1)
     {
-        // timestamp
+        // terminate thread
+        pthread_mutex_lock(data->mutex);
+        if (terminate) {
+            pthread_mutex_unlock(data->mutex);
+            break;
+        }
+        pthread_mutex_unlock(data->mutex);
+
         clock_gettime(CLOCK_MONOTONIC, &current_time);
 
         double elapsed = current_time.tv_sec - last_timestamp.tv_sec +
@@ -383,7 +427,6 @@ void *thread_timestamp(void *thread_param)
             }
             pthread_mutex_unlock(data->mutex);
             last_timestamp = current_time; // reset
-            usleep(100000); // yield cpu
         }
     }
     data->thread_complete = true;
@@ -400,6 +443,7 @@ int main(int argc, char *argv[])
     
     bool daemon_flag = false;
     int ret;
+    struct thread_data* data;
     
     STAILQ_INIT(&threadlist_head);
     pthread_mutex_init(&mutex, NULL);
@@ -426,11 +470,11 @@ int main(int argc, char *argv[])
     }
 
     // Exit Handler
-    // if (atexit(exit_handler) != SUCCESS)
-    // {
-    //     syslog(LOG_ERR, "failed to register exit handler");
-    //     return -1;
-    // };
+    if (atexit(handle_exit) != SUCCESS)
+    {
+        syslog(LOG_ERR, "failed to register exit handler");
+        return -1;
+    };
 
     // Signal handlers for SIGINT and SIGTERM
     if (setup_signal_handler() != SUCCESS)
@@ -444,36 +488,12 @@ int main(int argc, char *argv[])
         syslog(LOG_ERR, "signal setup fail");
         return -1;
     }
-
-    // Daemon Mode
+    
     if (daemon_flag)
     {
-        int kidpid = fork();
-        if (kidpid < 0)
-        {
+        if (daemon_mode() != 0) {
             syslog(LOG_ERR, "failed to initialize daemon");
             return -1;
-        }
-        else if (kidpid == 0)
-        {
-            if (freopen("/dev/null", "r", stdin) == NULL)
-            {
-                syslog(LOG_ERR, "Failed to redirect stdin to /dev/null");
-            }
-            if (freopen("/dev/null", "w", stdout) == NULL)
-            {
-                syslog(LOG_ERR, "Failed to redirect stdout to /dev/null");
-            }
-            if (freopen("/dev/null", "w", stderr) == NULL)
-            {
-                syslog(LOG_ERR, "Failed to redirect stderr to /dev/null");
-            }
-
-            syslog(LOG_INFO, "daemon initialized successfully");
-        }
-        else
-        {
-            return 0;
         }
     }
 
@@ -486,15 +506,7 @@ int main(int argc, char *argv[])
     syslog(LOG_INFO, "listening");
 
     // create timestamp thread
-
-    struct thread_data *timestamp_data = (struct thread_data*)malloc(sizeof(struct thread_data));
-    timestamp_data->client_fd = -1;
-    timestamp_data->file = NULL;
-    memset(&(timestamp_data->client_addr), 0, sizeof(timestamp_data->client_addr));
-    timestamp_data->client_len = sizeof(timestamp_data->client_addr);
-    timestamp_data->mutex = &mutex;
-    memset(timestamp_data->client_ip_str, 0, sizeof(timestamp_data->client_ip_str));
-    timestamp_data->thread_complete = false;
+    struct thread_data *timestamp_data = create_new_thread_data();
 
     ret = pthread_create(&(timestamp_data->thread_id), NULL, thread_timestamp, (void *)timestamp_data);
     if (ret != SUCCESS) {
@@ -516,17 +528,17 @@ int main(int argc, char *argv[])
 
 
     // Main Program Loop
-    while (!terminate)
+    while (1)
     {
-        // instantiate new thread_data
-        struct thread_data *data = (struct thread_data*)malloc(sizeof(struct thread_data));
-        data->client_fd = -1;
-        data->file = NULL;
-        memset(&(data->client_addr), 0, sizeof(data->client_addr));
-        data->client_len = sizeof(data->client_addr);
-        data->mutex = &mutex;
-        memset(data->client_ip_str, 0, sizeof(data->client_ip_str));
-        data->thread_complete = false;
+        // terminate application
+        pthread_mutex_lock(&mutex);
+        if (terminate) {
+            pthread_mutex_unlock(&mutex);
+            break;
+        }
+        pthread_mutex_unlock(&mutex);
+
+        data = create_new_thread_data();
 
         // ACCEPT
         data->client_fd = accept(sock_fd, (struct sockaddr *)&(data->client_addr), &(data->client_len)); 
@@ -566,28 +578,7 @@ int main(int argc, char *argv[])
         entry->data = data;
         STAILQ_INSERT_TAIL(&threadlist_head, entry, next_entry);
 
-        struct threadlist_entry *this_entry = STAILQ_FIRST(&threadlist_head);
-        struct threadlist_entry *tmp_next_entry;
-        while (this_entry != NULL)
-        {
-            tmp_next_entry = STAILQ_NEXT(this_entry, next_entry);
-            if (this_entry->data->thread_complete)
-            {
-                struct thread_data* this_data = this_entry->data;
-                pthread_join(this_data->thread_id, NULL); // does not currently check thread exit status
-                close(this_data->client_fd);
-                this_data->client_fd = -1;
-                syslog(LOG_INFO, "Closed connection from %s", this_data->client_ip_str);
-                if (this_data->file != NULL) {
-                    fclose(this_data->file);
-                    this_data->file = NULL;
-                }
-                STAILQ_REMOVE(&threadlist_head, this_entry, threadlist_entry, next_entry);
-                free(this_data);
-                free(this_entry);
-            }
-            this_entry = tmp_next_entry;
-        }
+        clean_threadlist(false);
     }
     return 0;
 }
