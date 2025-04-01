@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <sys/queue.h>
 #include <stdbool.h>
+#include <time.h>
 
 // TYPES
 struct thread_data
@@ -27,6 +28,13 @@ struct thread_data
     socklen_t client_len;
     pthread_mutex_t *mutex;
     char client_ip_str[INET6_ADDRSTRLEN];
+    bool thread_complete;
+};
+
+struct timestamp_thread_data
+{
+    pthread_t thread_id;
+    pthread_mutex_t *mutex;
     bool thread_complete;
 };
 
@@ -58,13 +66,11 @@ void thread_cleanup()
     struct threadlist_entry *tmp_next;
 
     while(current_entry != NULL) {
-        syslog(LOG_INFO, "in the out door");
+        syslog(LOG_INFO, "in thread cleanup loop");
         tmp_next = STAILQ_NEXT(current_entry, next_entry);
         struct thread_data *data = current_entry->data;
         
-        if (data->thread_id > 0) {
-            pthread_join(data->thread_id, NULL); // does not currently check thread exit status
-        }
+        pthread_join(data->thread_id, NULL); // does not currently check thread exit status
 
         if(data->client_fd >= 0) {
             close(data->client_fd);
@@ -100,11 +106,18 @@ void thread_cleanup()
 void handle_signal(int signal)
 {
     syslog(LOG_INFO, "Caught signal %d, shutting down gracefully...", signal);
-    
-    thread_cleanup(&threadlist_head);
-    pthread_mutex_destroy(&mutex);
-
     terminate = true;
+
+    if (sock_fd >= 0)
+    {
+        syslog(LOG_INFO, "closing sock_fd");
+        close(sock_fd);
+    }
+
+    thread_cleanup();
+    pthread_mutex_destroy(&mutex);
+    closelog();
+    exit(0);
 }
 
 int setup_signal_handler()
@@ -156,6 +169,7 @@ int initialize_socket()
     if (ret != 0)
     {
         syslog(LOG_ERR, "getaddrinfo failure: %s", gai_strerror(ret));
+        freeaddrinfo(res);
         return -1;
     }
 
@@ -165,11 +179,13 @@ int initialize_socket()
     if (sock_fd == -1)
     {
         syslog(LOG_ERR, "Failed to create socket");
+        freeaddrinfo(res);
         return -1;
     }
     if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) != 0)
     {
         syslog(LOG_ERR, "Failed to set SO_REUSEADDR");
+        freeaddrinfo(res);
         return -1;
     }
     syslog(LOG_INFO, "socket initialized");
@@ -178,6 +194,7 @@ int initialize_socket()
     if (bind(sock_fd, res->ai_addr, res->ai_addrlen) != SUCCESS)
     {
         syslog(LOG_ERR, "bind failure: %s", strerror(errno));
+        freeaddrinfo(res);
         return -1;
     }
     freeaddrinfo(res);
@@ -321,13 +338,75 @@ void *thread_read_write(void *thread_param)
     return NULL;
 }
 
+void *thread_timestamp(void *thread_param)
+{
+
+    struct thread_data *data = (struct thread_data *)thread_param;
+
+    // Set up timestamps
+    const char *timestamp_fmt = "timestamp:%a, %d %b %Y %T %z\n";
+    struct timespec current_time;
+    clock_gettime(CLOCK_MONOTONIC, &current_time);
+
+    pthread_mutex_lock(data->mutex);
+    FILE *file = fopen(write_file, "a");
+    if (file) {
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        char time_buffer[128];
+        strftime(time_buffer, sizeof(time_buffer), timestamp_fmt, tm_info);
+        fprintf(file, "%s", time_buffer);
+        fclose(file);
+    }
+    pthread_mutex_unlock(data->mutex);
+    struct timespec last_timestamp = current_time; // reset
+    clock_gettime(CLOCK_MONOTONIC, &last_timestamp);
+
+    while (!terminate)
+    {
+        // timestamp
+        clock_gettime(CLOCK_MONOTONIC, &current_time);
+
+        double elapsed = current_time.tv_sec - last_timestamp.tv_sec +
+                        (current_time.tv_nsec - last_timestamp.tv_nsec) / 1e9;
+
+        if (elapsed >= 10.0) {
+            pthread_mutex_lock(data->mutex);
+            FILE *file = fopen(write_file, "a");
+            if (file) {
+                time_t now = time(NULL);
+                struct tm *tm_info = localtime(&now);
+                char time_buffer[128];
+                strftime(time_buffer, sizeof(time_buffer), timestamp_fmt, tm_info);
+                fprintf(file, "%s", time_buffer);
+                fclose(file);
+            }
+            pthread_mutex_unlock(data->mutex);
+            last_timestamp = current_time; // reset
+            usleep(100000); // yield cpu
+        }
+    }
+    data->thread_complete = true;
+    return NULL;
+}
+
+
 // MAIN FUNCTION
 int main(int argc, char *argv[])
 {
+    // Log
+    openlog(NULL, 0, LOG_USER);
+    syslog(LOG_INFO, "Starting aesdsocket");
+    
     bool daemon_flag = false;
+    int ret;
     
     STAILQ_INIT(&threadlist_head);
     pthread_mutex_init(&mutex, NULL);
+
+    if (remove(write_file) == 0) {
+        syslog(LOG_INFO, "Removed existing file: %s", write_file);
+    }
 
     // Command-line Arguments
     int option;
@@ -345,9 +424,6 @@ int main(int argc, char *argv[])
             return -1;
         }
     }
-
-    // Log
-    openlog(NULL, 0, LOG_USER);
 
     // Exit Handler
     // if (atexit(exit_handler) != SUCCESS)
@@ -409,12 +485,41 @@ int main(int argc, char *argv[])
 
     syslog(LOG_INFO, "listening");
 
+    // create timestamp thread
+
+    struct thread_data *timestamp_data = (struct thread_data*)malloc(sizeof(struct thread_data));
+    timestamp_data->client_fd = -1;
+    timestamp_data->file = NULL;
+    memset(&(timestamp_data->client_addr), 0, sizeof(timestamp_data->client_addr));
+    timestamp_data->client_len = sizeof(timestamp_data->client_addr);
+    timestamp_data->mutex = &mutex;
+    memset(timestamp_data->client_ip_str, 0, sizeof(timestamp_data->client_ip_str));
+    timestamp_data->thread_complete = false;
+
+    ret = pthread_create(&(timestamp_data->thread_id), NULL, thread_timestamp, (void *)timestamp_data);
+    if (ret != SUCCESS) {
+        syslog(LOG_ERR, "Timestamp thread Start Failed with Error %s", strerror(ret));
+        free(timestamp_data);
+        return -1;
+    }
+    // add thread data to list
+    struct threadlist_entry *timestamp_entry = (struct threadlist_entry*)malloc(sizeof(struct threadlist_entry));
+    if (timestamp_entry == NULL) {
+        syslog(LOG_ERR, "Failed to allocate memory for timestamp_entry");
+        free(timestamp_entry);
+        free(timestamp_data);
+        return -1;
+    }
+    
+    timestamp_entry->data = timestamp_data;
+    STAILQ_INSERT_TAIL(&threadlist_head, timestamp_entry, next_entry);
+
+
     // Main Program Loop
     while (!terminate)
     {
         // instantiate new thread_data
         struct thread_data *data = (struct thread_data*)malloc(sizeof(struct thread_data));
-        data->thread_id = -1;
         data->client_fd = -1;
         data->file = NULL;
         memset(&(data->client_addr), 0, sizeof(data->client_addr));
@@ -422,24 +527,13 @@ int main(int argc, char *argv[])
         data->mutex = &mutex;
         memset(data->client_ip_str, 0, sizeof(data->client_ip_str));
         data->thread_complete = false;
-        
-
-        // add thread data to list
-        struct threadlist_entry *entry = (struct threadlist_entry*)malloc(sizeof(struct threadlist_entry));
-        if (entry == NULL) {
-            syslog(LOG_ERR, "Failed to allocate memory for threadlist_entry");
-            free(data);
-            return -1;
-        }
-        
-        entry->data = data;
-        STAILQ_INSERT_TAIL(&threadlist_head, entry, next_entry);
 
         // ACCEPT
         data->client_fd = accept(sock_fd, (struct sockaddr *)&(data->client_addr), &(data->client_len)); 
         if (data->client_fd == -1)
         {
             syslog(LOG_ERR, "Accept failure: %s", strerror(errno));
+            free(data);
             return -1;
         }
 
@@ -447,16 +541,30 @@ int main(int argc, char *argv[])
         if (parse_client_ip(&(data->client_addr), (char *)&(data->client_ip_str), sizeof(data->client_ip_str)) != SUCCESS)
         {
             syslog(LOG_ERR, "failed to parse client ip");
+            free(data);
             return -1;
         }
 
         syslog(LOG_INFO, "Accepted connection from %s", data->client_ip_str);
 
-        int ret = pthread_create(&(data->thread_id), NULL, thread_read_write, (void *)data);
+        ret = pthread_create(&(data->thread_id), NULL, thread_read_write, (void *)data);
         if (ret != SUCCESS) {
             syslog(LOG_ERR, "Thread Start Failed with Error %s", strerror(ret));
+            free(data);
             return -1;
         }
+
+        // add thread data to list
+        struct threadlist_entry *entry = (struct threadlist_entry*)malloc(sizeof(struct threadlist_entry));
+        if (entry == NULL) {
+            syslog(LOG_ERR, "Failed to allocate memory for threadlist_entry");
+            free(entry);
+            free(data);
+            return -1;
+        }
+        
+        entry->data = data;
+        STAILQ_INSERT_TAIL(&threadlist_head, entry, next_entry);
 
         struct threadlist_entry *this_entry = STAILQ_FIRST(&threadlist_head);
         struct threadlist_entry *tmp_next_entry;
@@ -476,6 +584,7 @@ int main(int argc, char *argv[])
                 }
                 STAILQ_REMOVE(&threadlist_head, this_entry, threadlist_entry, next_entry);
                 free(this_data);
+                free(this_entry);
             }
             this_entry = tmp_next_entry;
         }
