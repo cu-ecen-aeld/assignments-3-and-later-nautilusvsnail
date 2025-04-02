@@ -168,23 +168,26 @@ int daemon_mode()
     {
         return -1;
     }
-    else if (kidpid == 0)
+    else if (kidpid > 0)
     {
-        if (freopen("/dev/null", "r", stdin) == NULL)
-        {
-            syslog(LOG_ERR, "Failed to redirect stdin to /dev/null");
-        }
-        if (freopen("/dev/null", "w", stdout) == NULL)
-        {
-            syslog(LOG_ERR, "Failed to redirect stdout to /dev/null");
-        }
-        if (freopen("/dev/null", "w", stderr) == NULL)
-        {
-            syslog(LOG_ERR, "Failed to redirect stderr to /dev/null");
-        }
-
-        syslog(LOG_INFO, "daemon initialized successfully");
+        exit(0);
     }
+
+    // child process continues
+    if (freopen("/dev/null", "r", stdin) == NULL)
+    {
+        syslog(LOG_ERR, "Failed to redirect stdin to /dev/null");
+    }
+    if (freopen("/dev/null", "w", stdout) == NULL)
+    {
+        syslog(LOG_ERR, "Failed to redirect stdout to /dev/null");
+    }
+    if (freopen("/dev/null", "w", stderr) == NULL)
+    {
+        syslog(LOG_ERR, "Failed to redirect stderr to /dev/null");
+    }
+
+    syslog(LOG_INFO, "daemon initialized successfully");
     return 0;
 }
 
@@ -428,6 +431,7 @@ void *thread_timestamp(void *thread_param)
             pthread_mutex_unlock(data->mutex);
             last_timestamp = current_time; // reset
         }
+        usleep(1000);
     }
     data->thread_complete = true;
     return NULL;
