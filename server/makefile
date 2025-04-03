@@ -1,13 +1,10 @@
 # compiler and flags
-CC ?= gcc
-CFLAGS = -g -Wall -Werror
-
-# cross-compile
 CROSS_COMPILE ?= 
-CC := $(CROSS_COMPILE)gcc
+CC ?= $(CROSS_COMPILE)gcc
+CFLAGS ?= -g -Wall -Werror
 
 # target executable
-TARGET = aesdsocket
+TARGET ?= aesdsocket
 
 # source files
 SRC = aesdsocket.c
