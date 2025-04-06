@@ -1,7 +1,7 @@
 # compiler and flags
 CROSS_COMPILE ?= 
 CC ?= $(CROSS_COMPILE)gcc
-CFLAGS ?= -g -Wall -Werror
+CFLAGS ?= -Wall -Wextra -Werror
 LDFLAGS ?=
 
 # target executable
